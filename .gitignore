@@ -6,3 +6,4 @@ outputs/*
 !outputs/.gitkeep
 reference_me/*
 !reference_me/.gitkeep
+photos/
