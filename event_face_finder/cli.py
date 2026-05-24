@@ -38,6 +38,7 @@ def main() -> None:
     build_parser.add_argument("--output", required=True, type=Path)
     build_parser.add_argument("--det-size", default=640, type=int)
     build_parser.add_argument("--model-root", default=Path("models"), type=Path)
+    build_parser.add_argument("--provider", choices=["coreml", "cpu"], default="cpu")
 
     scan_parser = subparsers.add_parser("scan")
     scan_parser.add_argument("--photos-root", required=True, type=Path, action="append")
@@ -47,6 +48,7 @@ def main() -> None:
     scan_parser.add_argument("--review-threshold", default=0.34, type=float)
     scan_parser.add_argument("--det-size", default=640, type=int)
     scan_parser.add_argument("--model-root", default=Path("models"), type=Path)
+    scan_parser.add_argument("--provider", choices=["coreml", "cpu"], default="cpu")
     scan_parser.add_argument("--limit", default=None, type=int)
 
     export_parser = subparsers.add_parser("export")
@@ -64,7 +66,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "build-reference":
-        build_reference(args.reference_dir, args.output, args.det_size, args.model_root)
+        build_reference(args.reference_dir, args.output, args.det_size, args.model_root, args.provider)
     elif args.command == "scan":
         scan_photos(
             args.photos_root,
@@ -74,6 +76,7 @@ def main() -> None:
             args.review_threshold,
             args.det_size,
             args.model_root,
+            args.provider,
             args.limit,
         )
     elif args.command == "export":
@@ -82,8 +85,14 @@ def main() -> None:
         create_contact_sheets(args.csv, args.output_dir, args.bucket, args.thumb_size, args.columns)
 
 
-def build_reference(reference_dir: Path, output: Path, det_size: int, model_root: Path) -> None:
-    app = load_face_app(det_size, model_root)
+def build_reference(
+    reference_dir: Path,
+    output: Path,
+    det_size: int,
+    model_root: Path,
+    provider: str,
+) -> None:
+    app = load_face_app(det_size, model_root, provider)
     embeddings: list[np.ndarray] = []
     rows: list[dict[str, object]] = []
 
@@ -121,11 +130,12 @@ def scan_photos(
     review_threshold: float,
     det_size: int,
     model_root: Path,
+    provider: str,
     limit: int | None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     cache = open_cache(output_dir / "cache.sqlite")
-    app = load_face_app(det_size, model_root)
+    app = load_face_app(det_size, model_root, provider)
     reference_embeddings = np.load(reference_profile)["embeddings"]
 
     images = []
@@ -233,11 +243,14 @@ def create_contact_sheets(
     print(f"Wrote contact sheets to {output_dir}")
 
 
-def load_face_app(det_size: int, model_root: Path):
+def load_face_app(det_size: int, model_root: Path, provider: str):
     from insightface.app import FaceAnalysis
 
     model_root.mkdir(parents=True, exist_ok=True)
-    app = FaceAnalysis(name="buffalo_l", root=str(model_root), providers=["CPUExecutionProvider"])
+    providers = ["CPUExecutionProvider"]
+    if provider == "coreml":
+        providers = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+    app = FaceAnalysis(name="buffalo_l", root=str(model_root), providers=providers)
     app.prepare(ctx_id=-1, det_size=(det_size, det_size))
     return app
 
