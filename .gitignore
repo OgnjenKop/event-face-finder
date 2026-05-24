@@ -7,3 +7,4 @@ outputs/*
 reference_me/*
 !reference_me/.gitkeep
 photos/
+models/
