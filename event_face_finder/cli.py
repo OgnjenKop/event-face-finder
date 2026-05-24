@@ -47,9 +47,12 @@ def main() -> None:
     scan_parser.add_argument("--high-threshold", default=0.43, type=float)
     scan_parser.add_argument("--review-threshold", default=0.34, type=float)
     scan_parser.add_argument("--det-size", default=640, type=int)
+    scan_parser.add_argument("--max-image-size", default=2200, type=int)
     scan_parser.add_argument("--model-root", default=Path("models"), type=Path)
     scan_parser.add_argument("--provider", choices=["coreml", "cpu"], default="cpu")
+    scan_parser.add_argument("--offset", default=0, type=int)
     scan_parser.add_argument("--limit", default=None, type=int)
+    scan_parser.add_argument("--csv-mode", choices=["overwrite", "append"], default="overwrite")
 
     export_parser = subparsers.add_parser("export")
     export_parser.add_argument("--csv", required=True, type=Path)
@@ -75,9 +78,12 @@ def main() -> None:
             args.high_threshold,
             args.review_threshold,
             args.det_size,
+            args.max_image_size,
             args.model_root,
             args.provider,
+            args.offset,
             args.limit,
+            args.csv_mode,
         )
     elif args.command == "export":
         export_matches(args.csv, args.output_dir, args.mode)
@@ -129,9 +135,12 @@ def scan_photos(
     high_threshold: float,
     review_threshold: float,
     det_size: int,
+    max_image_size: int,
     model_root: Path,
     provider: str,
+    offset: int,
     limit: int | None,
+    csv_mode: str,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     cache = open_cache(output_dir / "cache.sqlite")
@@ -147,12 +156,14 @@ def scan_photos(
                 continue
             seen.add(resolved)
             images.append(path)
+    if offset:
+        images = images[offset:]
     if limit is not None:
         images = images[:limit]
 
     matches: list[FaceMatch] = []
     for image_path in tqdm(images, desc="Scanning images"):
-        faces = get_or_detect_cached(cache, app, image_path)
+        faces = get_or_detect_cached(cache, app, image_path, max_image_size)
         for face_index, face in enumerate(faces):
             score = best_similarity(face["embedding"], reference_embeddings)
             if score >= high_threshold:
@@ -174,7 +185,7 @@ def scan_photos(
             )
 
     csv_path = output_dir / "matches.csv"
-    write_matches_csv(csv_path, matches)
+    write_matches_csv(csv_path, matches, append=csv_mode == "append")
     print(f"Wrote {len(matches)} candidate face matches to {csv_path}")
 
 
@@ -255,24 +266,47 @@ def load_face_app(det_size: int, model_root: Path, provider: str):
     return app
 
 
-def detect_faces(app, image_path: Path):
+def detect_faces(app, image_path: Path, max_image_size: int):
     image = cv2.imread(str(image_path))
     if image is None:
         return []
-    return app.get(image)
+    height, width = image.shape[:2]
+    scale = 1.0
+    largest_side = max(width, height)
+    if max_image_size > 0 and largest_side > max_image_size:
+        scale = max_image_size / largest_side
+        image = cv2.resize(
+            image,
+            (int(width * scale), int(height * scale)),
+            interpolation=cv2.INTER_AREA,
+        )
+    faces = app.get(image)
+    if scale == 1.0:
+        return faces
+    for face in faces:
+        face.bbox = face.bbox / scale
+    return faces
 
 
-def get_or_detect_cached(cache: sqlite3.Connection, app, image_path: Path) -> list[dict[str, object]]:
+def get_or_detect_cached(
+    cache: sqlite3.Connection,
+    app,
+    image_path: Path,
+    max_image_size: int,
+) -> list[dict[str, object]]:
     stat = image_path.stat()
     row = cache.execute(
-        "select faces_json from detections where path = ? and mtime_ns = ? and size = ?",
-        (str(image_path), stat.st_mtime_ns, stat.st_size),
+        """
+        select faces_json from detections
+        where path = ? and mtime_ns = ? and size = ? and max_image_size = ?
+        """,
+        (str(image_path), stat.st_mtime_ns, stat.st_size, max_image_size),
     ).fetchone()
     if row:
         return decode_faces(row[0])
 
     faces = []
-    for face in detect_faces(app, image_path):
+    for face in detect_faces(app, image_path, max_image_size):
         faces.append(
             {
                 "bbox": [int(value) for value in face.bbox.tolist()],
@@ -283,10 +317,10 @@ def get_or_detect_cached(cache: sqlite3.Connection, app, image_path: Path) -> li
 
     cache.execute(
         """
-        insert or replace into detections(path, mtime_ns, size, faces_json)
-        values (?, ?, ?, ?)
+        insert or replace into detections(path, mtime_ns, size, max_image_size, faces_json)
+        values (?, ?, ?, ?, ?)
         """,
-        (str(image_path), stat.st_mtime_ns, stat.st_size, encode_faces(faces)),
+        (str(image_path), stat.st_mtime_ns, stat.st_size, max_image_size, encode_faces(faces)),
     )
     cache.commit()
     return faces
@@ -301,9 +335,20 @@ def open_cache(path: Path) -> sqlite3.Connection:
             path text primary key,
             mtime_ns integer not null,
             size integer not null,
+            max_image_size integer not null default 0,
             faces_json text not null
         )
         """
+    )
+    columns = {
+        row[1] for row in connection.execute("pragma table_info(detections)").fetchall()
+    }
+    if "max_image_size" not in columns:
+        connection.execute(
+            "alter table detections add column max_image_size integer not null default 0"
+        )
+    connection.execute(
+        "create unique index if not exists detections_cache_key on detections(path, mtime_ns, size, max_image_size)"
     )
     return connection
 
@@ -328,14 +373,16 @@ def decode_faces(payload: str) -> list[dict[str, object]]:
     return rows
 
 
-def write_matches_csv(path: Path, matches: list[FaceMatch]) -> None:
+def write_matches_csv(path: Path, matches: list[FaceMatch], append: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="") as handle:
+    should_write_header = not append or not path.exists() or path.stat().st_size == 0
+    with path.open("a" if append else "w", newline="") as handle:
         writer = csv.DictWriter(
             handle,
             fieldnames=["image_path", "face_index", "score", "bucket", "bbox", "det_score"],
         )
-        writer.writeheader()
+        if should_write_header:
+            writer.writeheader()
         for match in sorted(matches, key=lambda item: item.score, reverse=True):
             writer.writerow(
                 {
