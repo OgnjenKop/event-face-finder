@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PYTHON="${PYTHON:-.venv/bin/python}"
+
 PHOTOS_ROOTS=(
   "/Users/ognjen.koprivica/Pictures/FOTOGRAFIJE - CAHSE THE HUNT"
   "/Users/ognjen.koprivica/Pictures/FOTOGRAFIJE - CAHSE THE HUNT 2"
@@ -19,7 +21,7 @@ for photos_root in "${PHOTOS_ROOTS[@]}"; do
   photos_root_args+=(--photos-root "$photos_root")
 done
 
-python -m event_face_finder build-reference \
+"$PYTHON" -m event_face_finder build-reference \
   --reference-dir reference_me \
   --output outputs/reference_profile.npz
 
@@ -31,7 +33,7 @@ total=13439
 
 while [ "$offset" -lt "$total" ]; do
   echo "Scanning chunk starting at image offset $offset"
-  python -m event_face_finder scan \
+  "$PYTHON" -m event_face_finder scan \
     "${photos_root_args[@]}" \
     --reference-profile outputs/reference_profile.npz \
     --output-dir outputs \
@@ -44,12 +46,12 @@ while [ "$offset" -lt "$total" ]; do
   offset=$((offset + chunk_size))
 done
 
-python -m event_face_finder export \
+"$PYTHON" -m event_face_finder export \
   --csv outputs/matches.csv \
   --output-dir outputs \
   --mode symlink
 
-python -m event_face_finder contact-sheets \
+"$PYTHON" -m event_face_finder contact-sheets \
   --csv outputs/matches.csv \
   --output-dir outputs/contact_sheets \
   --bucket review
