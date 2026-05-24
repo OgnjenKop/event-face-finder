@@ -40,7 +40,7 @@ def main() -> None:
     build_parser.add_argument("--model-root", default=Path("models"), type=Path)
 
     scan_parser = subparsers.add_parser("scan")
-    scan_parser.add_argument("--photos-root", required=True, type=Path)
+    scan_parser.add_argument("--photos-root", required=True, type=Path, action="append")
     scan_parser.add_argument("--reference-profile", required=True, type=Path)
     scan_parser.add_argument("--output-dir", required=True, type=Path)
     scan_parser.add_argument("--high-threshold", default=0.43, type=float)
@@ -114,7 +114,7 @@ def build_reference(reference_dir: Path, output: Path, det_size: int, model_root
 
 
 def scan_photos(
-    photos_root: Path,
+    photos_roots: list[Path],
     reference_profile: Path,
     output_dir: Path,
     high_threshold: float,
@@ -128,7 +128,15 @@ def scan_photos(
     app = load_face_app(det_size, model_root)
     reference_embeddings = np.load(reference_profile)["embeddings"]
 
-    images = [path for path in iter_images(photos_root) if not is_inside(path, output_dir)]
+    images = []
+    seen: set[Path] = set()
+    for photos_root in photos_roots:
+        for path in iter_images(photos_root):
+            resolved = path.resolve()
+            if resolved in seen or is_inside(path, output_dir):
+                continue
+            seen.add(resolved)
+            images.append(path)
     if limit is not None:
         images = images[:limit]
 
