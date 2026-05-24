@@ -107,7 +107,7 @@ def build_reference(
         raise SystemExit(f"No reference images found in {reference_dir}")
 
     for image_path in tqdm(images, desc="Reference images"):
-        faces = detect_faces(app, image_path)
+        faces = detect_faces(app, image_path, max_image_size=0)
         if not faces:
             rows.append({"path": str(image_path), "faces": 0, "used": False})
             continue
