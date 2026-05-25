@@ -18,11 +18,17 @@
         </div>
 
         <form id="scan-form" class="scan-form">
-          <div id="form-message" class="form-message" role="status"></div>
+          <div id="form-message" class="form-message" role="status" hidden></div>
 
           <label>
             <span>Person ID</span>
-            <input id="person-id" name="person_id" list="known-people" autocomplete="off" placeholder="alex" />
+            <input
+              id="person-id"
+              name="person_id"
+              list="known-people"
+              autocomplete="off"
+              placeholder="alex"
+            />
             <datalist id="known-people"></datalist>
           </label>
 
@@ -49,7 +55,13 @@
           <div class="grid-2">
             <label>
               <span>High</span>
-              <input id="high-threshold" name="high_threshold" type="number" step="0.01" value="0.43" />
+              <input
+                id="high-threshold"
+                name="high_threshold"
+                type="number"
+                step="0.01"
+                value="0.43"
+              />
             </label>
             <label>
               <span>Review</span>
@@ -135,7 +147,9 @@
           <div class="panel">
             <div class="panel-head">
               <h2>Results</h2>
-              <button id="refresh-results" class="ghost" type="button">Refresh</button>
+              <button id="refresh-results" class="ghost" type="button" aria-label="Refresh results">
+                Refresh
+              </button>
             </div>
             <div id="paths" class="paths"></div>
             <div id="contact-sheets" class="contact-sheets"></div>
@@ -145,7 +159,9 @@
             <div class="panel-head">
               <h2>Run Log</h2>
               <div class="log-actions">
-                <button id="clear-log" class="ghost" type="button">Clear</button>
+                <button id="clear-log" class="ghost" type="button" aria-label="Clear visible log">
+                  Clear
+                </button>
                 <span id="return-code" class="muted"></span>
               </div>
             </div>

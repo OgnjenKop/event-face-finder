@@ -16,6 +16,8 @@ const personIdEl = document.querySelector("#person-id");
 const referenceDirEl = document.querySelector("#reference-dir");
 const formMessageEl = document.querySelector("#form-message");
 const knownPeopleEl = document.querySelector("#known-people");
+let hiddenLogLineCount = 0;
+let lastStatus = "idle";
 
 function formPayload() {
   return {
@@ -51,9 +53,17 @@ async function postJson(url, payload = {}) {
 }
 
 async function refreshStatus() {
-  const response = await fetch("/api/status");
-  const status = await response.json();
+  let status;
+  try {
+    const response = await fetch("/api/status");
+    status = await response.json();
+  } catch {
+    showFormMessage("Unable to reach the local GUI server.", "error");
+    return;
+  }
+
   const isRunning = status.status === "running" || status.status === "stopping";
+  const wasRunning = lastStatus === "running" || lastStatus === "stopping";
   statusEl.textContent = capitalize(status.status);
   statusEl.dataset.status = status.status;
   statusNoteEl.textContent = status.command.length ? status.command.slice(0, 4).join(" ") : "";
@@ -61,14 +71,14 @@ async function refreshStatus() {
     status.returncode === null || status.returncode === undefined
       ? ""
       : `exit ${status.returncode}`;
-  logEl.textContent = status.lines.join("\n");
-  logEl.scrollTop = logEl.scrollHeight;
+  renderLog(status.lines);
   startButton.disabled = isRunning;
   stopButton.disabled = !isRunning;
 
-  if (status.status === "completed" || status.status === "failed") {
+  if (isRunning || (wasRunning && (status.status === "completed" || status.status === "failed"))) {
     await refreshResults();
   }
+  lastStatus = status.status;
 }
 
 async function refreshResults() {
@@ -114,13 +124,20 @@ function renderResults(results) {
   sheetsEl.innerHTML = summary.contact_sheets
     .map(
       (filename) =>
-        `<img alt="Contact sheet" src="/api/contact-sheet?person_id=${encodeURIComponent(
-          personIdEl.value.trim(),
-        )}&workspace=${encodeURIComponent(
-          document.querySelector("#workspace").value.trim() || "outputs",
-        )}&filename=${encodeURIComponent(filename)}" />`,
+        `<figure class="sheet">
+          <img alt="Contact sheet ${escapeHtml(filename)}" src="${contactSheetUrl(filename)}" />
+          <figcaption>${escapeHtml(filename)}</figcaption>
+        </figure>`,
     )
     .join("");
+}
+
+function contactSheetUrl(filename) {
+  const personId = personIdEl.value.trim();
+  const workspace = document.querySelector("#workspace").value.trim() || "outputs";
+  return `/api/contact-sheet?person_id=${encodeURIComponent(
+    personId,
+  )}&workspace=${encodeURIComponent(workspace)}&filename=${encodeURIComponent(filename)}`;
 }
 
 function renderEmptyResults(resetCounts = true) {
@@ -145,6 +162,16 @@ function showFormMessage(message, type = "info") {
   formMessageEl.textContent = message;
   formMessageEl.dataset.type = type;
   formMessageEl.hidden = !message;
+}
+
+function renderLog(lines) {
+  const visibleLines = lines.slice(hiddenLogLineCount);
+  const distanceFromBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight;
+  const shouldStickToBottom = distanceFromBottom < 24 || !logEl.textContent;
+  logEl.textContent = visibleLines.join("\n");
+  if (shouldStickToBottom) {
+    logEl.scrollTop = logEl.scrollHeight;
+  }
 }
 
 function pathRow(label, value) {
@@ -200,6 +227,7 @@ stopButton.addEventListener("click", async () => {
 
 refreshButton.addEventListener("click", refreshResults);
 clearLogButton.addEventListener("click", () => {
+  hiddenLogLineCount += logEl.textContent ? logEl.textContent.split("\n").length : 0;
   logEl.textContent = "";
 });
 
