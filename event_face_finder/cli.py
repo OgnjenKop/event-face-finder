@@ -152,11 +152,12 @@ def build_reference(
     model_root: Path,
     provider: str,
     min_reference_faces: int = 5,
+    app=None,
 ) -> None:
     if min_reference_faces < 1:
         raise SystemExit("min-reference-faces must be greater than zero.")
 
-    app = load_face_app(det_size, model_root, provider)
+    app = app or load_face_app(det_size, model_root, provider)
     embeddings: list[np.ndarray] = []
     rows: list[dict[str, object]] = []
 
@@ -207,40 +208,31 @@ def scan_photos(
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     cache = open_cache(cache_path or output_dir / "cache.sqlite")
-    app = load_face_app(det_size, model_root, provider)
-    reference_embeddings = np.load(reference_profile)["embeddings"]
+    try:
+        app = load_face_app(det_size, model_root, provider)
+        reference_embeddings = load_reference_embeddings(reference_profile)
 
-    if image_paths is None:
-        images = collect_scan_images(photos_roots, output_dir)
-    else:
-        images = image_paths
-    if offset:
-        images = images[offset:]
-    if limit is not None:
-        images = images[:limit]
+        if image_paths is None:
+            images = collect_scan_images(photos_roots, output_dir)
+        else:
+            images = image_paths
+        if offset:
+            images = images[offset:]
+        if limit is not None:
+            images = images[:limit]
 
-    matches: list[FaceMatch] = []
-    for image_path in tqdm(images, desc="Scanning images"):
-        faces = get_or_detect_cached(cache, app, image_path, max_image_size)
-        for face_index, face in enumerate(faces):
-            score = best_similarity(face["embedding"], reference_embeddings)
-            if score >= high_threshold:
-                bucket = "high"
-            elif score >= review_threshold:
-                bucket = "review"
-            else:
-                continue
-
-            matches.append(
-                FaceMatch(
-                    image_path=image_path,
-                    face_index=face_index,
-                    score=score,
-                    bucket=bucket,
-                    bbox=tuple(face["bbox"]),
-                    det_score=float(face["det_score"]),
-                )
-            )
+        matches = scan_image_paths(
+            images,
+            reference_embeddings,
+            cache,
+            app,
+            max_image_size,
+            high_threshold,
+            review_threshold,
+        )
+        cache.commit()
+    finally:
+        cache.close()
 
     csv_path = output_dir / "matches.csv"
     write_matches_csv(csv_path, matches, append=csv_mode == "append")
@@ -280,6 +272,7 @@ def run_person_workflow(
     shared_cache = cache_path or workspace / "cache.sqlite"
 
     person_output_dir.mkdir(parents=True, exist_ok=True)
+    app = load_face_app(det_size, model_root, provider)
     build_reference(
         reference_dir,
         reference_profile,
@@ -287,6 +280,7 @@ def run_person_workflow(
         model_root,
         provider,
         min_reference_faces,
+        app,
     )
 
     if matches_csv.exists():
@@ -299,25 +293,26 @@ def run_person_workflow(
         roots = ", ".join(str(path) for path in photos_roots)
         raise SystemExit(f"No supported images found in photo roots: {roots}")
 
-    for offset in range(0, total, chunk_size):
-        print(f"Scanning {person_id} chunk starting at image offset {offset}")
-        chunk = images[offset : offset + chunk_size]
-        scan_photos(
-            photos_roots,
-            reference_profile,
-            person_output_dir,
-            shared_cache,
-            high_threshold,
-            review_threshold,
-            det_size,
-            max_image_size,
-            model_root,
-            provider,
-            0,
-            None,
-            "append",
-            chunk,
-        )
+    cache = open_cache(shared_cache)
+    try:
+        reference_embeddings = load_reference_embeddings(reference_profile)
+        for offset in range(0, total, chunk_size):
+            print(f"Scanning {person_id} chunk starting at image offset {offset}")
+            chunk = images[offset : offset + chunk_size]
+            matches = scan_image_paths(
+                chunk,
+                reference_embeddings,
+                cache,
+                app,
+                max_image_size,
+                high_threshold,
+                review_threshold,
+            )
+            cache.commit()
+            write_matches_csv(matches_csv, matches, append=True)
+            print(f"Wrote {len(matches)} candidate face matches to {matches_csv}")
+    finally:
+        cache.close()
 
     export_matches(matches_csv, person_output_dir, export_mode)
     create_contact_sheets(matches_csv, person_output_dir / "contact_sheets", "high", 180, 5)
@@ -458,6 +453,40 @@ def detect_faces(app, image_path: Path, max_image_size: int):
     return faces
 
 
+def scan_image_paths(
+    images: list[Path],
+    reference_embeddings: np.ndarray,
+    cache: sqlite3.Connection,
+    app,
+    max_image_size: int,
+    high_threshold: float,
+    review_threshold: float,
+) -> list[FaceMatch]:
+    matches: list[FaceMatch] = []
+    for image_path in tqdm(images, desc="Scanning images"):
+        faces = get_or_detect_cached(cache, app, image_path, max_image_size)
+        for face_index, face in enumerate(faces):
+            score = best_similarity(face["embedding"], reference_embeddings)
+            if score >= high_threshold:
+                bucket = "high"
+            elif score >= review_threshold:
+                bucket = "review"
+            else:
+                continue
+
+            matches.append(
+                FaceMatch(
+                    image_path=image_path,
+                    face_index=face_index,
+                    score=score,
+                    bucket=bucket,
+                    bbox=tuple(face["bbox"]),
+                    det_score=float(face["det_score"]),
+                )
+            )
+    return matches
+
+
 def get_or_detect_cached(
     cache: sqlite3.Connection,
     app,
@@ -492,13 +521,14 @@ def get_or_detect_cached(
         """,
         (str(image_path), stat.st_mtime_ns, stat.st_size, max_image_size, encode_faces(faces)),
     )
-    cache.commit()
     return faces
 
 
 def open_cache(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path)
+    connection = sqlite3.connect(path, timeout=30)
+    connection.execute("pragma journal_mode = wal")
+    connection.execute("pragma synchronous = normal")
     connection.execute(
         """
         create table if not exists detections (
@@ -519,6 +549,16 @@ def open_cache(path: Path) -> sqlite3.Connection:
         )
     connection.execute("drop index if exists detections_cache_key")
     return connection
+
+
+def load_reference_embeddings(reference_profile: Path) -> np.ndarray:
+    profile = np.load(reference_profile)
+    try:
+        return np.asarray(profile["embeddings"], dtype=np.float32)
+    finally:
+        close = getattr(profile, "close", None)
+        if close:
+            close()
 
 
 def encode_faces(faces: list[dict[str, object]]) -> str:

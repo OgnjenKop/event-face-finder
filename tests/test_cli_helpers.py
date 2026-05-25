@@ -12,6 +12,7 @@ from event_face_finder.cli import (
     create_contact_sheets,
     export_matches,
     open_cache,
+    run_person_workflow,
     scan_photos,
 )
 from event_face_finder.validation import is_safe_person_id
@@ -80,6 +81,50 @@ class ImageCountingTests(unittest.TestCase):
             collect.assert_not_called()
             open_cache_mock.assert_called_once()
             load_app.assert_called_once()
+
+    def test_run_person_reuses_model_and_cache_across_chunks(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            reference = root / "reference"
+            workspace = root / "outputs"
+            reference.mkdir()
+            images = [root / "a.jpg", root / "b.jpg"]
+            cache = unittest.mock.Mock()
+
+            with (
+                patch("event_face_finder.cli.load_face_app", return_value=object()) as load_app,
+                patch("event_face_finder.cli.build_reference") as build_reference,
+                patch("event_face_finder.cli.collect_scan_images", return_value=images),
+                patch("event_face_finder.cli.open_cache", return_value=cache) as open_cache_mock,
+                patch("event_face_finder.cli.load_reference_embeddings", return_value=[]),
+                patch("event_face_finder.cli.scan_image_paths", return_value=[]) as scan_paths,
+                patch("event_face_finder.cli.write_matches_csv"),
+                patch("event_face_finder.cli.export_matches"),
+                patch("event_face_finder.cli.create_contact_sheets"),
+                redirect_stdout(StringIO()),
+            ):
+                run_person_workflow(
+                    "alex",
+                    [root / "photos"],
+                    reference,
+                    workspace,
+                    None,
+                    0.43,
+                    0.34,
+                    640,
+                    2200,
+                    root / "models",
+                    "cpu",
+                    1,
+                    "symlink",
+                )
+
+            load_app.assert_called_once()
+            build_reference.assert_called_once()
+            open_cache_mock.assert_called_once()
+            self.assertEqual(scan_paths.call_count, 2)
+            self.assertEqual(cache.commit.call_count, 2)
+            cache.close.assert_called_once()
 
 
 class OutputCleanupTests(unittest.TestCase):
