@@ -126,6 +126,36 @@ class ImageCountingTests(unittest.TestCase):
             self.assertEqual(cache.commit.call_count, 2)
             cache.close.assert_called_once()
 
+    def test_run_person_checks_for_images_before_loading_model(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            reference = root / "reference"
+            workspace = root / "outputs"
+            reference.mkdir()
+
+            with (
+                patch("event_face_finder.cli.collect_scan_images", return_value=[]),
+                patch("event_face_finder.cli.load_face_app") as load_app,
+            ):
+                with self.assertRaises(SystemExit):
+                    run_person_workflow(
+                        "alex",
+                        [root / "photos"],
+                        reference,
+                        workspace,
+                        None,
+                        0.43,
+                        0.34,
+                        640,
+                        2200,
+                        root / "models",
+                        "cpu",
+                        500,
+                        "symlink",
+                    )
+
+            load_app.assert_not_called()
+
 
 class OutputCleanupTests(unittest.TestCase):
     def test_clears_only_generated_result_directories(self) -> None:

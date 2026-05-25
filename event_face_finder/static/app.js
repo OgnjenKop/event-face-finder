@@ -30,6 +30,7 @@ function formPayload() {
     review_threshold: document.querySelector("#review-threshold").value,
     max_image_size: document.querySelector("#max-image-size").value,
     chunk_size: document.querySelector("#chunk-size").value,
+    min_reference_faces: document.querySelector("#min-reference-faces").value,
     provider: document.querySelector("#provider").value,
     export_mode: document.querySelector("#export-mode").value,
   };
@@ -49,7 +50,19 @@ async function postJson(url, payload = {}) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
-  return response.json();
+  const text = await response.text();
+  let body = {};
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      throw new Error(`Unexpected response from the local GUI server (${response.status}).`);
+    }
+  }
+  if (!response.ok && !body.error) {
+    throw new Error(`Request failed with status ${response.status}.`);
+  }
+  return body;
 }
 
 async function refreshStatus() {
@@ -151,11 +164,15 @@ function renderEmptyResults(resetCounts = true) {
 }
 
 async function loadKnownPeople() {
-  const response = await fetch("/api/reference-people");
-  const payload = await response.json();
-  knownPeopleEl.innerHTML = payload.people
-    .map((person) => `<option value="${escapeHtml(person)}"></option>`)
-    .join("");
+  try {
+    const response = await fetch("/api/reference-people");
+    const payload = await response.json();
+    knownPeopleEl.innerHTML = payload.people
+      .map((person) => `<option value="${escapeHtml(person)}"></option>`)
+      .join("");
+  } catch {
+    knownPeopleEl.innerHTML = "";
+  }
 }
 
 function showFormMessage(message, type = "info") {
@@ -210,14 +227,22 @@ form.addEventListener("submit", async (event) => {
   defaultReferenceDir();
   showFormMessage("");
   startButton.disabled = true;
-  const result = await postJson("/api/start", formPayload());
-  if (!result.ok) {
-    showFormMessage(result.error || "Unable to start scan.", "error");
+  try {
+    const result = await postJson("/api/start", formPayload());
+    if (!result.ok) {
+      showFormMessage(result.error || "Unable to start scan.", "error");
+      startButton.disabled = false;
+      return;
+    }
+    hiddenLogLineCount = 0;
+    lastStatus = "idle";
+    logEl.textContent = "";
+    showFormMessage("Scan started.", "success");
+    await refreshStatus();
+  } catch (error) {
+    showFormMessage(error.message || "Unable to start scan.", "error");
     startButton.disabled = false;
-    return;
   }
-  showFormMessage("Scan started.", "success");
-  await refreshStatus();
 });
 
 stopButton.addEventListener("click", async () => {

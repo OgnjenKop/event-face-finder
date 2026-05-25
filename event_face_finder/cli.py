@@ -266,6 +266,12 @@ def run_person_workflow(
     if not reference_dir.is_dir():
         raise SystemExit(f"Reference folder not found: {reference_dir}")
 
+    images = collect_scan_images(photos_roots, workspace)
+    total = len(images)
+    if total == 0:
+        roots = ", ".join(str(path) for path in photos_roots)
+        raise SystemExit(f"No supported images found in photo roots: {roots}")
+
     person_output_dir = workspace / "people" / person_id
     reference_profile = person_output_dir / "reference_profile.npz"
     matches_csv = person_output_dir / "matches.csv"
@@ -286,12 +292,6 @@ def run_person_workflow(
     if matches_csv.exists():
         matches_csv.unlink()
     clear_generated_outputs(person_output_dir)
-
-    images = collect_scan_images(photos_roots, workspace)
-    total = len(images)
-    if total == 0:
-        roots = ", ".join(str(path) for path in photos_roots)
-        raise SystemExit(f"No supported images found in photo roots: {roots}")
 
     cache = open_cache(shared_cache)
     try:

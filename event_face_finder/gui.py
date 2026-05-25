@@ -61,6 +61,8 @@ class GuiState:
                 return False
             self.job.status = "stopping"
         process.terminate()
+        thread = threading.Thread(target=self._kill_if_still_stopping, args=(process,), daemon=True)
+        thread.start()
         return True
 
     def append_line(self, line: str) -> None:
@@ -94,6 +96,19 @@ class GuiState:
                 self.job.returncode = -1
                 self.job.process = None
                 self.job.lines.append(f"GUI server error: {exc}")
+
+    def _kill_if_still_stopping(self, process: subprocess.Popen[str]) -> None:
+        try:
+            process.wait(timeout=8)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+
+        with self.lock:
+            should_kill = self.job.process is process and self.job.status == "stopping"
+        if should_kill:
+            process.kill()
+            self.append_line("Scan did not stop after 8 seconds; force-stopped it.")
 
 
 def run_gui(host: str, port: int, should_open: bool) -> None:
@@ -262,12 +277,19 @@ def build_run_command(payload: dict[str, Any]) -> list[str]:
     review_threshold = parse_float(payload.get("review_threshold"), 0.34, "Review threshold")
     max_image_size = parse_int(payload.get("max_image_size"), 2200, "Max image size")
     chunk_size = parse_int(payload.get("chunk_size"), 500, "Chunk size")
+    min_reference_faces = parse_int(
+        payload.get("min_reference_faces"),
+        5,
+        "Minimum reference faces",
+    )
     if not 0 <= review_threshold <= high_threshold <= 1:
         raise ValueError("Thresholds must satisfy 0 <= review <= high <= 1.")
     if max_image_size < 0:
         raise ValueError("Max image size must be zero or greater.")
     if chunk_size < 1:
         raise ValueError("Chunk size must be greater than zero.")
+    if min_reference_faces < 1:
+        raise ValueError("Minimum reference faces must be greater than zero.")
 
     provider = str(payload.get("provider") or "cpu")
     export_mode = str(payload.get("export_mode") or "symlink")
@@ -293,6 +315,8 @@ def build_run_command(payload: dict[str, Any]) -> list[str]:
         str(max_image_size),
         "--chunk-size",
         str(chunk_size),
+        "--min-reference-faces",
+        str(min_reference_faces),
         "--provider",
         provider,
         "--export-mode",

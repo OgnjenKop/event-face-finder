@@ -1,7 +1,9 @@
 import sys
 import unittest
+import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import Mock
 
 from event_face_finder.gui import GuiState, build_run_command, list_reference_people, read_results
 
@@ -27,6 +29,7 @@ class GuiCommandTests(unittest.TestCase):
                     "review_threshold": "0.34",
                     "max_image_size": "2200",
                     "chunk_size": "500",
+                    "min_reference_faces": "4",
                     "provider": "cpu",
                     "export_mode": "symlink",
                 }
@@ -36,6 +39,8 @@ class GuiCommandTests(unittest.TestCase):
         self.assertIn("--person-id", command)
         self.assertIn("alex", command)
         self.assertEqual(command.count("--photos-root"), 2)
+        self.assertIn("--min-reference-faces", command)
+        self.assertIn("4", command)
 
     def test_requires_person_and_photo_roots(self) -> None:
         with self.assertRaises(ValueError):
@@ -120,6 +125,8 @@ class GuiCommandTests(unittest.TestCase):
                 build_run_command({**base, "chunk_size": "0"})
             with self.assertRaises(ValueError):
                 build_run_command({**base, "max_image_size": "-1"})
+            with self.assertRaises(ValueError):
+                build_run_command({**base, "min_reference_faces": "0"})
 
 
 class GuiReferencePeopleTests(unittest.TestCase):
@@ -174,6 +181,18 @@ class GuiStateTests(unittest.TestCase):
         state.job.status = "stopping"
 
         self.assertFalse(state.start([sys.executable, "--version"]))
+
+    def test_force_kills_process_that_does_not_stop(self) -> None:
+        process = Mock()
+        process.wait.side_effect = subprocess.TimeoutExpired("scan", 8)
+        state = GuiState()
+        state.job.status = "stopping"
+        state.job.process = process
+
+        state._kill_if_still_stopping(process)
+
+        process.kill.assert_called_once()
+        self.assertIn("force-stopped", state.job.lines[-1])
 
 
 if __name__ == "__main__":
