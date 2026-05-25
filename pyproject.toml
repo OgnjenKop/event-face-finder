@@ -1,8 +1,33 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "event-face-finder"
 version = "0.1.0"
-description = "Local InsightFace-based face search for large event photo folders"
+description = "Local face search for large event photo collections"
+readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  { name = "Event Face Finder contributors" },
+]
+keywords = ["face-recognition", "photo-management", "events", "local-first", "computer-vision"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Environment :: Web Environment",
+  "Intended Audience :: End Users/Desktop",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Multimedia :: Graphics",
+  "Topic :: Scientific/Engineering :: Image Recognition",
+]
 dependencies = [
   "insightface>=0.7.3",
   "onnxruntime>=1.17.0",
@@ -14,6 +39,13 @@ dependencies = [
 
 [project.scripts]
 event-face-finder = "event_face_finder.cli:main"
+
+[tool.setuptools.package-data]
+event_face_finder = ["static/*.html", "static/*.css", "static/*.js"]
+
+[tool.setuptools.packages.find]
+include = ["event_face_finder*"]
+exclude = ["tests*", "docs*"]
 
 [tool.ruff]
 line-length = 100

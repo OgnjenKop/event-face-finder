@@ -16,6 +16,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageOps
 from tqdm import tqdm
 
+from event_face_finder.validation import is_safe_person_id
+
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp", ".heic", ".heif"}
 
 
@@ -39,11 +41,13 @@ def main() -> None:
     build_parser.add_argument("--det-size", default=640, type=int)
     build_parser.add_argument("--model-root", default=Path("models"), type=Path)
     build_parser.add_argument("--provider", choices=["coreml", "cpu"], default="cpu")
+    build_parser.add_argument("--min-reference-faces", default=5, type=int)
 
     scan_parser = subparsers.add_parser("scan")
     scan_parser.add_argument("--photos-root", required=True, type=Path, action="append")
     scan_parser.add_argument("--reference-profile", required=True, type=Path)
     scan_parser.add_argument("--output-dir", required=True, type=Path)
+    scan_parser.add_argument("--cache-path", default=None, type=Path)
     scan_parser.add_argument("--high-threshold", default=0.43, type=float)
     scan_parser.add_argument("--review-threshold", default=0.34, type=float)
     scan_parser.add_argument("--det-size", default=640, type=int)
@@ -66,15 +70,44 @@ def main() -> None:
     sheet_parser.add_argument("--thumb-size", default=180, type=int)
     sheet_parser.add_argument("--columns", default=5, type=int)
 
+    run_person_parser = subparsers.add_parser("run-person")
+    run_person_parser.add_argument("--person-id", required=True)
+    run_person_parser.add_argument("--photos-root", required=True, type=Path, action="append")
+    run_person_parser.add_argument("--reference-dir", default=None, type=Path)
+    run_person_parser.add_argument("--workspace", default=Path("outputs"), type=Path)
+    run_person_parser.add_argument("--cache-path", default=None, type=Path)
+    run_person_parser.add_argument("--high-threshold", default=0.43, type=float)
+    run_person_parser.add_argument("--review-threshold", default=0.34, type=float)
+    run_person_parser.add_argument("--det-size", default=640, type=int)
+    run_person_parser.add_argument("--max-image-size", default=2200, type=int)
+    run_person_parser.add_argument("--model-root", default=Path("models"), type=Path)
+    run_person_parser.add_argument("--provider", choices=["coreml", "cpu"], default="cpu")
+    run_person_parser.add_argument("--chunk-size", default=500, type=int)
+    run_person_parser.add_argument("--export-mode", choices=["copy", "symlink"], default="symlink")
+    run_person_parser.add_argument("--min-reference-faces", default=5, type=int)
+
+    gui_parser = subparsers.add_parser("gui")
+    gui_parser.add_argument("--host", default="127.0.0.1")
+    gui_parser.add_argument("--port", default=8765, type=int)
+    gui_parser.add_argument("--no-open", action="store_true")
+
     args = parser.parse_args()
 
     if args.command == "build-reference":
-        build_reference(args.reference_dir, args.output, args.det_size, args.model_root, args.provider)
+        build_reference(
+            args.reference_dir,
+            args.output,
+            args.det_size,
+            args.model_root,
+            args.provider,
+            args.min_reference_faces,
+        )
     elif args.command == "scan":
         scan_photos(
             args.photos_root,
             args.reference_profile,
             args.output_dir,
+            args.cache_path,
             args.high_threshold,
             args.review_threshold,
             args.det_size,
@@ -89,6 +122,27 @@ def main() -> None:
         export_matches(args.csv, args.output_dir, args.mode)
     elif args.command == "contact-sheets":
         create_contact_sheets(args.csv, args.output_dir, args.bucket, args.thumb_size, args.columns)
+    elif args.command == "run-person":
+        run_person_workflow(
+            args.person_id,
+            args.photos_root,
+            args.reference_dir,
+            args.workspace,
+            args.cache_path,
+            args.high_threshold,
+            args.review_threshold,
+            args.det_size,
+            args.max_image_size,
+            args.model_root,
+            args.provider,
+            args.chunk_size,
+            args.export_mode,
+            args.min_reference_faces,
+        )
+    elif args.command == "gui":
+        from event_face_finder.gui import run_gui
+
+        run_gui(args.host, args.port, not args.no_open)
 
 
 def build_reference(
@@ -97,7 +151,11 @@ def build_reference(
     det_size: int,
     model_root: Path,
     provider: str,
+    min_reference_faces: int = 5,
 ) -> None:
+    if min_reference_faces < 1:
+        raise SystemExit("min-reference-faces must be greater than zero.")
+
     app = load_face_app(det_size, model_root, provider)
     embeddings: list[np.ndarray] = []
     rows: list[dict[str, object]] = []
@@ -116,8 +174,11 @@ def build_reference(
         embeddings.append(normalize_embedding(face.embedding))
         rows.append({"path": str(image_path), "faces": len(faces), "used": True})
 
-    if len(embeddings) < 5:
-        raise SystemExit("Need at least 5 usable reference faces; 15-30 is recommended.")
+    if len(embeddings) < min_reference_faces:
+        raise SystemExit(
+            f"Need at least {min_reference_faces} usable reference faces; "
+            "15-30 is recommended."
+        )
 
     output.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
@@ -132,6 +193,7 @@ def scan_photos(
     photos_roots: list[Path],
     reference_profile: Path,
     output_dir: Path,
+    cache_path: Path | None,
     high_threshold: float,
     review_threshold: float,
     det_size: int,
@@ -141,21 +203,17 @@ def scan_photos(
     offset: int,
     limit: int | None,
     csv_mode: str,
+    image_paths: list[Path] | None = None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    cache = open_cache(output_dir / "cache.sqlite")
+    cache = open_cache(cache_path or output_dir / "cache.sqlite")
     app = load_face_app(det_size, model_root, provider)
     reference_embeddings = np.load(reference_profile)["embeddings"]
 
-    images = []
-    seen: set[Path] = set()
-    for photos_root in photos_roots:
-        for path in iter_images(photos_root):
-            resolved = path.resolve()
-            if resolved in seen or is_inside(path, output_dir):
-                continue
-            seen.add(resolved)
-            images.append(path)
+    if image_paths is None:
+        images = collect_scan_images(photos_roots, output_dir)
+    else:
+        images = image_paths
     if offset:
         images = images[offset:]
     if limit is not None:
@@ -189,9 +247,95 @@ def scan_photos(
     print(f"Wrote {len(matches)} candidate face matches to {csv_path}")
 
 
-def export_matches(csv_path: Path, output_dir: Path, mode: str) -> None:
+def run_person_workflow(
+    person_id: str,
+    photos_roots: list[Path],
+    reference_dir: Path | None,
+    workspace: Path,
+    cache_path: Path | None,
+    high_threshold: float,
+    review_threshold: float,
+    det_size: int,
+    max_image_size: int,
+    model_root: Path,
+    provider: str,
+    chunk_size: int,
+    export_mode: str,
+    min_reference_faces: int = 5,
+) -> None:
+    if not is_safe_person_id(person_id):
+        raise SystemExit(
+            "person-id can only contain letters, numbers, dots, underscores, and hyphens."
+        )
+    if chunk_size < 1:
+        raise SystemExit("chunk-size must be greater than zero.")
+
+    reference_dir = reference_dir or Path("reference_people") / person_id
+    if not reference_dir.is_dir():
+        raise SystemExit(f"Reference folder not found: {reference_dir}")
+
+    person_output_dir = workspace / "people" / person_id
+    reference_profile = person_output_dir / "reference_profile.npz"
+    matches_csv = person_output_dir / "matches.csv"
+    shared_cache = cache_path or workspace / "cache.sqlite"
+
+    person_output_dir.mkdir(parents=True, exist_ok=True)
+    build_reference(
+        reference_dir,
+        reference_profile,
+        det_size,
+        model_root,
+        provider,
+        min_reference_faces,
+    )
+
+    if matches_csv.exists():
+        matches_csv.unlink()
+    clear_generated_outputs(person_output_dir)
+
+    images = collect_scan_images(photos_roots, workspace)
+    total = len(images)
+    if total == 0:
+        roots = ", ".join(str(path) for path in photos_roots)
+        raise SystemExit(f"No supported images found in photo roots: {roots}")
+
+    for offset in range(0, total, chunk_size):
+        print(f"Scanning {person_id} chunk starting at image offset {offset}")
+        chunk = images[offset : offset + chunk_size]
+        scan_photos(
+            photos_roots,
+            reference_profile,
+            person_output_dir,
+            shared_cache,
+            high_threshold,
+            review_threshold,
+            det_size,
+            max_image_size,
+            model_root,
+            provider,
+            0,
+            None,
+            "append",
+            chunk,
+        )
+
+    export_matches(matches_csv, person_output_dir, export_mode)
+    create_contact_sheets(matches_csv, person_output_dir / "contact_sheets", "high", 180, 5)
+    create_contact_sheets(matches_csv, person_output_dir / "contact_sheets", "review", 180, 5)
+
+    print()
+    print(f"Done. Results for {person_id}:")
+    print(f"  {person_output_dir / 'matches_high'}")
+    print(f"  {person_output_dir / 'matches_review'}")
+    print(f"  {person_output_dir / 'contact_sheets'}")
+    print(f"  {matches_csv}")
+
+
+def export_matches(csv_path: Path, output_dir: Path, mode: str, clean: bool = True) -> None:
     rows = read_match_rows(csv_path)
     exported: set[tuple[str, str]] = set()
+    if clean:
+        clear_match_outputs(output_dir)
 
     for row in rows:
         source = Path(row["image_path"])
@@ -214,6 +358,24 @@ def export_matches(csv_path: Path, output_dir: Path, mode: str) -> None:
     print(f"Exported {len(exported)} unique image links/files into {output_dir}")
 
 
+def clear_generated_outputs(output_dir: Path) -> None:
+    for name in ("matches_high", "matches_review", "contact_sheets"):
+        path = output_dir / name
+        if path.is_symlink():
+            path.unlink()
+        elif path.exists():
+            shutil.rmtree(path)
+
+
+def clear_match_outputs(output_dir: Path) -> None:
+    for name in ("matches_high", "matches_review"):
+        path = output_dir / name
+        if path.is_symlink():
+            path.unlink()
+        elif path.exists():
+            shutil.rmtree(path)
+
+
 def create_contact_sheets(
     csv_path: Path,
     output_dir: Path,
@@ -221,7 +383,15 @@ def create_contact_sheets(
     thumb_size: int,
     columns: int,
 ) -> None:
+    if columns < 1:
+        raise ValueError("columns must be greater than zero.")
+    if thumb_size < 1:
+        raise ValueError("thumb-size must be greater than zero.")
+
     output_dir.mkdir(parents=True, exist_ok=True)
+    for stale_sheet in output_dir.glob(f"{bucket}_*.jpg"):
+        stale_sheet.unlink()
+
     rows = [row for row in read_match_rows(csv_path) if row["bucket"] == bucket]
     if not rows:
         print(f"No {bucket} rows found.")
@@ -347,9 +517,7 @@ def open_cache(path: Path) -> sqlite3.Connection:
         connection.execute(
             "alter table detections add column max_image_size integer not null default 0"
         )
-    connection.execute(
-        "create unique index if not exists detections_cache_key on detections(path, mtime_ns, size, max_image_size)"
-    )
+    connection.execute("drop index if exists detections_cache_key")
     return connection
 
 
@@ -405,6 +573,23 @@ def iter_images(root: Path) -> Iterable[Path]:
     for path in root.rglob("*"):
         if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
             yield path
+
+
+def collect_scan_images(photos_roots: list[Path], output_dir: Path) -> list[Path]:
+    images: list[Path] = []
+    seen: set[Path] = set()
+    for photos_root in photos_roots:
+        for path in iter_images(photos_root):
+            resolved = path.resolve()
+            if resolved in seen or is_inside(path, output_dir):
+                continue
+            seen.add(resolved)
+            images.append(path)
+    return images
+
+
+def count_scan_images(photos_roots: list[Path], output_dir: Path) -> int:
+    return len(collect_scan_images(photos_roots, output_dir))
 
 
 def is_inside(path: Path, parent: Path) -> bool:

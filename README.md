@@ -1,97 +1,223 @@
 # Event Face Finder
 
-Local face search for large event photo sets.
+Local face search for large event photo collections.
 
-The workflow is designed for reliability:
+Event Face Finder helps photographers, event organizers, and participants find photos
+of a specific person across thousands of event images. It runs on your machine, keeps
+each person's results separate, and reuses a shared face-detection cache so follow-up
+searches are much faster.
 
-1. Put 15-30 clear reference photos of the target person in `reference_me/`.
-2. Build a reference profile from those faces.
-3. Scan the event photo folders once.
-4. Export high-confidence matches, review candidates, CSVs, and contact sheets.
+> Important: this project processes biometric data. Read [PRIVACY.md](PRIVACY.md)
+> before using it on real people or public event photos.
 
-The original event photos are never modified.
+## Features
+
+- Local-first workflow; no hosted service or cloud upload.
+- Web GUI for common scans and result review.
+- CLI for repeatable batch workflows.
+- Multiple photo roots per scan.
+- Shared local cache for detected face embeddings.
+- Separate output folders for each searched person.
+- High-confidence and manual-review match buckets.
+- Contact sheets for quick visual verification.
+
+## Status
+
+This project is early but usable. The current focus is reliable local operation,
+privacy-conscious defaults, and clear review workflows. See [ROADMAP.md](ROADMAP.md)
+for planned work.
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.10 or newer
 - macOS, Linux, or Windows
-- Enough disk space for cached face crops and outputs
+- Disk space for local cache and generated outputs
+- Reference photos for each person you want to search
 
-Install dependencies:
+InsightFace may download model files on first use. Model weights and third-party
+dependencies may have their own licenses and usage restrictions; review them before
+commercial, public-sector, or regulated use.
+
+## Installation From Source
+
+Detailed platform notes are in [docs/installation.md](docs/installation.md).
 
 ```bash
+git clone https://github.com/OgnjenKop/event-face-finder.git
+cd event-face-finder
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
 pip install -r requirements.txt
 ```
 
-InsightFace may download model files on first run.
+On Windows PowerShell, activate the environment with:
 
-## Folder Layout
-
-```text
-reference_me/          Your reference photos
-outputs/
-  cache.sqlite         Cached detections and embeddings
-  reference_profile.npz
-  matches.csv
-  matches_high/
-  matches_review/
-  contact_sheets/
+```powershell
+.\.venv\Scripts\Activate.ps1
 ```
 
-## Usage
+## Start The GUI
 
-Build the reference profile:
+See [docs/workflow.md](docs/workflow.md) for the full user workflow.
+
+```bash
+python -m event_face_finder gui
+```
+
+Open `http://127.0.0.1:8765` if your browser does not open automatically.
+
+From a source checkout, this shortcut does the same thing:
+
+```bash
+./scripts/start_gui.sh
+```
+
+The GUI runs locally and writes results into `outputs/`.
+
+## CLI Quick Start
+
+Create a reference folder for a person:
+
+```bash
+mkdir -p reference_people/alex
+```
+
+Add clear reference photos of that person into `reference_people/alex/`. Use at least
+5 usable face photos; 8-15 is better. Mix front-facing, side-angle, indoor, outdoor,
+and event-lighting photos when possible.
+
+Run a search:
+
+```bash
+python -m event_face_finder run-person \
+  --person-id alex \
+  --photos-root "/path/to/event/photos"
+```
+
+For multiple photo folders, repeat `--photos-root`:
+
+```bash
+python -m event_face_finder run-person \
+  --person-id alex \
+  --photos-root "/path/to/event/day-1" \
+  --photos-root "/path/to/event/day-2"
+```
+
+Results are written to:
+
+```text
+outputs/people/alex/matches_high/
+outputs/people/alex/matches_review/
+outputs/people/alex/contact_sheets/
+outputs/people/alex/matches.csv
+```
+
+For another person, add a new reference folder and use a new `--person-id`. If the
+same photo folders and image-size settings are used, the second run reuses
+`outputs/cache.sqlite` and should be much faster.
+
+## Output Files
+
+```text
+reference_people/
+  alex/                 Reference photos for one person
+outputs/
+  cache.sqlite          Shared local detections and embeddings cache
+  people/
+    alex/
+      reference_profile.npz
+      matches.csv
+      matches_high/
+      matches_review/
+      contact_sheets/
+```
+
+The files under `outputs/` can contain biometric data and local file paths. They are
+ignored by Git by default and should not be published without consent.
+
+## Thresholds
+
+Defaults are tuned for event photos with many faces:
+
+- `--high-threshold 0.43`
+- `--review-threshold 0.34`
+
+Raise thresholds if there are too many false positives. Lower the review threshold if
+obvious matches are missing, then inspect contact sheets carefully.
+
+See [docs/troubleshooting.md](docs/troubleshooting.md) for common scan and install
+issues.
+
+## Advanced Commands
+
+Build a reference profile manually:
 
 ```bash
 python -m event_face_finder build-reference \
-  --reference-dir reference_me \
-  --output outputs/reference_profile.npz
+  --reference-dir reference_people/alex \
+  --output outputs/people/alex/reference_profile.npz
 ```
 
-Scan the event photos:
+Scan manually:
 
 ```bash
 python -m event_face_finder scan \
-  --photos-root "/Users/ognjen.koprivica/Pictures" \
-  --reference-profile outputs/reference_profile.npz \
-  --output-dir outputs \
+  --photos-root "/path/to/event/photos" \
+  --reference-profile outputs/people/alex/reference_profile.npz \
+  --output-dir outputs/people/alex \
+  --cache-path outputs/cache.sqlite \
   --high-threshold 0.43 \
   --review-threshold 0.34
 ```
 
-Export/copy matching original files into review folders:
+Export matching originals as symlinks:
 
 ```bash
 python -m event_face_finder export \
-  --csv outputs/matches.csv \
-  --output-dir outputs \
+  --csv outputs/people/alex/matches.csv \
+  --output-dir outputs/people/alex \
   --mode symlink
 ```
 
-Create contact sheets for fast manual review:
+Create contact sheets:
 
 ```bash
 python -m event_face_finder contact-sheets \
-  --csv outputs/matches.csv \
-  --output-dir outputs/contact_sheets
+  --csv outputs/people/alex/matches.csv \
+  --output-dir outputs/people/alex/contact_sheets \
+  --bucket review
 ```
 
-## Thresholds
+## Accuracy
 
-Thresholds depend on image quality and reference photos. Start with:
+Face recognition is probabilistic. Matches can be wrong, and real appearances can be
+missed. Treat `matches_high` as likely matches, not proof. Always review results before
+sharing, publishing, or taking action based on them.
 
-- `high-threshold`: `0.43`
-- `review-threshold`: `0.34`
+## Development
 
-Then inspect `outputs/contact_sheets/review_*.jpg`. If too many false positives appear, raise thresholds slightly. If obvious photos are missing, lower the review threshold.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local development guidance.
+
+Run tests:
+
+```bash
+python -m unittest discover
+```
+
+## Project Policies
+
+- [Privacy](PRIVACY.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security](SECURITY.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Roadmap](ROADMAP.md)
+- [Changelog](CHANGELOG.md)
+- [License](LICENSE)
 
 ## Notes
 
-- Use 15-30 reference photos with varied lighting, angles, expressions, and distance.
-- Avoid using blurry or tiny reference faces.
-- Event photos are processed recursively.
-- HEIC files require system/imageio support; JPEG and PNG are the most reliable.
-- InsightFace pretrained model licensing should be checked before commercial use.
+- JPEG and PNG are the most reliable input formats.
+- HEIC files require system/image library support.
+- Person IDs may contain letters, numbers, dots, underscores, and hyphens.
+- The original event photos are never modified.

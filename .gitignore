@@ -1,10 +1,13 @@
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
 .DS_Store
 outputs/*
 !outputs/.gitkeep
 reference_me/*
 !reference_me/.gitkeep
+reference_people/*
+!reference_people/.gitkeep
 photos/
 models/

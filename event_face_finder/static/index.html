@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Event Face Finder</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">EF</div>
+          <div>
+            <h1>Event Face Finder</h1>
+            <p>Local face search</p>
+          </div>
+        </div>
+
+        <form id="scan-form" class="scan-form">
+          <div id="form-message" class="form-message" role="status"></div>
+
+          <label>
+            <span>Person ID</span>
+            <input id="person-id" name="person_id" list="known-people" autocomplete="off" placeholder="alex" />
+            <datalist id="known-people"></datalist>
+          </label>
+
+          <label>
+            <span>Reference folder</span>
+            <input
+              id="reference-dir"
+              name="reference_dir"
+              autocomplete="off"
+              placeholder="reference_people/alex"
+            />
+          </label>
+
+          <label>
+            <span>Photo folders</span>
+            <textarea
+              id="photos-roots"
+              name="photos_roots"
+              rows="5"
+              placeholder="/path/to/event/photos"
+            ></textarea>
+          </label>
+
+          <div class="grid-2">
+            <label>
+              <span>High</span>
+              <input id="high-threshold" name="high_threshold" type="number" step="0.01" value="0.43" />
+            </label>
+            <label>
+              <span>Review</span>
+              <input
+                id="review-threshold"
+                name="review_threshold"
+                type="number"
+                step="0.01"
+                value="0.34"
+              />
+            </label>
+          </div>
+
+          <details>
+            <summary>Settings</summary>
+            <div class="settings">
+              <label>
+                <span>Workspace</span>
+                <input id="workspace" name="workspace" value="outputs" />
+              </label>
+              <label>
+                <span>Cache path</span>
+                <input id="cache-path" name="cache_path" placeholder="outputs/cache.sqlite" />
+              </label>
+              <div class="grid-2">
+                <label>
+                  <span>Provider</span>
+                  <select id="provider" name="provider">
+                    <option value="cpu">CPU</option>
+                    <option value="coreml">CoreML</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Export</span>
+                  <select id="export-mode" name="export_mode">
+                    <option value="symlink">Symlink</option>
+                    <option value="copy">Copy</option>
+                  </select>
+                </label>
+              </div>
+              <div class="grid-2">
+                <label>
+                  <span>Max image</span>
+                  <input id="max-image-size" name="max_image_size" type="number" value="2200" />
+                </label>
+                <label>
+                  <span>Chunk</span>
+                  <input id="chunk-size" name="chunk_size" type="number" value="500" />
+                </label>
+              </div>
+            </div>
+          </details>
+
+          <div class="actions">
+            <button id="start-button" class="primary" type="submit">Start scan</button>
+            <button id="stop-button" class="secondary" type="button">Stop</button>
+          </div>
+        </form>
+      </aside>
+
+      <main class="workspace">
+        <section class="status-strip">
+          <div>
+            <span class="label">Status</span>
+            <strong id="status">Idle</strong>
+            <div id="status-note" class="status-note"></div>
+          </div>
+          <div>
+            <span class="label">High</span>
+            <strong id="high-count">0</strong>
+          </div>
+          <div>
+            <span class="label">Review</span>
+            <strong id="review-count">0</strong>
+          </div>
+          <div>
+            <span class="label">Total</span>
+            <strong id="total-count">0</strong>
+          </div>
+        </section>
+
+        <section class="result-layout">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Results</h2>
+              <button id="refresh-results" class="ghost" type="button">Refresh</button>
+            </div>
+            <div id="paths" class="paths"></div>
+            <div id="contact-sheets" class="contact-sheets"></div>
+          </div>
+
+          <div class="panel log-panel">
+            <div class="panel-head">
+              <h2>Run Log</h2>
+              <div class="log-actions">
+                <button id="clear-log" class="ghost" type="button">Clear</button>
+                <span id="return-code" class="muted"></span>
+              </div>
+            </div>
+            <pre id="log"></pre>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

@@ -1,49 +1,48 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PYTHON="${PYTHON:-.venv/bin/python}"
+if [ "$#" -lt 4 ]; then
+  echo "Usage: $0 REFERENCE_DIR TOTAL_IMAGES CHUNK_SIZE PHOTOS_ROOT [PHOTOS_ROOT ...]"
+  echo
+  echo "Example:"
+  echo "  $0 reference_people/alex 14000 500 /path/to/event/photos"
+  exit 2
+fi
 
-PHOTOS_ROOTS=(
-  "/Users/ognjen.koprivica/Pictures/FOTOGRAFIJE - CAHSE THE HUNT"
-  "/Users/ognjen.koprivica/Pictures/FOTOGRAFIJE - CAHSE THE HUNT 2"
-  "/Users/ognjen.koprivica/Pictures/FOTOGRAFIJE - CAHSE THE HUNT 3"
-  "/Users/ognjen.koprivica/Pictures/FOTOGRAFIJE - CAHSE THE HUNT 4"
-  "/Users/ognjen.koprivica/Pictures/FOTOGRAFIJE - CAHSE THE HUNT 5"
-  "/Users/ognjen.koprivica/Pictures/FOTOGRAFIJE - CAHSE THE HUNT 6"
-  "/Users/ognjen.koprivica/Pictures/FOTOGRAFIJE - CAHSE THE HUNT 7"
-  "/Users/ognjen.koprivica/Pictures/FOTOGRAFIJE - CAHSE THE HUNT 8"
-  "/Users/ognjen.koprivica/Pictures/FOTOGRAFIJE - CAHSE THE HUNT 9"
-  "/Users/ognjen.koprivica/Pictures/FOTOGRAFIJE - CAHSE THE HUNT 10"
-)
+PYTHON="${PYTHON:-python}"
+REFERENCE_DIR="$1"
+TOTAL="$2"
+CHUNK_SIZE="$3"
+shift 3
 
 photos_root_args=()
-for photos_root in "${PHOTOS_ROOTS[@]}"; do
+for photos_root in "$@"; do
   photos_root_args+=(--photos-root "$photos_root")
 done
 
+mkdir -p outputs
+
 "$PYTHON" -m event_face_finder build-reference \
-  --reference-dir reference_me \
+  --reference-dir "$REFERENCE_DIR" \
   --output outputs/reference_profile.npz
 
 rm -f outputs/matches.csv
 
 offset=0
-chunk_size=500
-total=13439
-
-while [ "$offset" -lt "$total" ]; do
+while [ "$offset" -lt "$TOTAL" ]; do
   echo "Scanning chunk starting at image offset $offset"
   "$PYTHON" -m event_face_finder scan \
     "${photos_root_args[@]}" \
     --reference-profile outputs/reference_profile.npz \
     --output-dir outputs \
+    --cache-path outputs/cache.sqlite \
     --high-threshold 0.43 \
     --review-threshold 0.34 \
     --max-image-size 2200 \
     --offset "$offset" \
-    --limit "$chunk_size" \
+    --limit "$CHUNK_SIZE" \
     --csv-mode append
-  offset=$((offset + chunk_size))
+  offset=$((offset + CHUNK_SIZE))
 done
 
 "$PYTHON" -m event_face_finder export \
