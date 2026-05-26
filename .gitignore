@@ -3,6 +3,9 @@ __pycache__/
 *.pyc
 *.egg-info/
 .DS_Store
+desktop-backend.log
+node_modules/
+src-tauri/target/
 outputs/*
 !outputs/.gitkeep
 reference_me/*

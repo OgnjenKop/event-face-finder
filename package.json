@@ -1,0 +1,19 @@
+{
+  "name": "event-face-finder-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tauri desktop wrapper for Event Face Finder",
+  "scripts": {
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "desktop:info": "tauri info",
+    "check:js": "node --check event_face_finder/static/app.js"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/plugin-dialog": "^2.7.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.2"
+  }
+}

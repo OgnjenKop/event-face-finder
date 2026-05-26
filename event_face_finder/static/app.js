@@ -14,6 +14,8 @@ const pathsEl = document.querySelector("#paths");
 const sheetsEl = document.querySelector("#contact-sheets");
 const personIdEl = document.querySelector("#person-id");
 const referenceDirEl = document.querySelector("#reference-dir");
+const photosRootsEl = document.querySelector("#photos-roots");
+const workspaceEl = document.querySelector("#workspace");
 const formMessageEl = document.querySelector("#form-message");
 const knownPeopleEl = document.querySelector("#known-people");
 let hiddenLogLineCount = 0;
@@ -22,9 +24,9 @@ let lastStatus = "idle";
 function formPayload() {
   return {
     person_id: document.querySelector("#person-id").value.trim(),
-    reference_dir: document.querySelector("#reference-dir").value.trim(),
-    photos_roots: document.querySelector("#photos-roots").value,
-    workspace: document.querySelector("#workspace").value.trim() || "outputs",
+    reference_dir: referenceDirEl.value.trim(),
+    photos_roots: photosRootsEl.value,
+    workspace: workspaceEl.value.trim() || "outputs",
     cache_path: document.querySelector("#cache-path").value.trim(),
     high_threshold: document.querySelector("#high-threshold").value,
     review_threshold: document.querySelector("#review-threshold").value,
@@ -96,7 +98,7 @@ async function refreshStatus() {
 
 async function refreshResults() {
   const personId = personIdEl.value.trim();
-  const workspace = document.querySelector("#workspace").value.trim() || "outputs";
+  const workspace = workspaceEl.value.trim() || "outputs";
   if (!personId) {
     renderEmptyResults();
     return;
@@ -147,7 +149,7 @@ function renderResults(results) {
 
 function contactSheetUrl(filename) {
   const personId = personIdEl.value.trim();
-  const workspace = document.querySelector("#workspace").value.trim() || "outputs";
+  const workspace = workspaceEl.value.trim() || "outputs";
   return `/api/contact-sheet?person_id=${encodeURIComponent(
     personId,
   )}&workspace=${encodeURIComponent(workspace)}&filename=${encodeURIComponent(filename)}`;
@@ -215,12 +217,66 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function tauriDialog() {
+  return window.__TAURI__?.dialog;
+}
+
+async function chooseDirectory({ multiple = false } = {}) {
+  const dialog = tauriDialog();
+  if (!dialog?.open) {
+    showFormMessage("Folder picker is available in the desktop app.", "info");
+    return null;
+  }
+
+  const result = await dialog.open({
+    directory: true,
+    multiple,
+    title: multiple ? "Choose photo folders" : "Choose folder",
+  });
+  if (!result) {
+    return null;
+  }
+  return Array.isArray(result) ? result : [result];
+}
+
+async function handleDirectoryPicker(event) {
+  const target = event.currentTarget.dataset.picker;
+  try {
+    if (target === "reference-dir") {
+      const paths = await chooseDirectory();
+      if (paths?.length) {
+        referenceDirEl.value = paths[0];
+      }
+    } else if (target === "photos-roots") {
+      const paths = await chooseDirectory({ multiple: true });
+      if (paths?.length) {
+        const existing = photosRootsEl.value
+          .split("\n")
+          .map((value) => value.trim())
+          .filter(Boolean);
+        photosRootsEl.value = [...new Set([...existing, ...paths])].join("\n");
+      }
+    } else if (target === "workspace") {
+      const paths = await chooseDirectory();
+      if (paths?.length) {
+        workspaceEl.value = paths[0];
+      }
+    }
+  } catch (error) {
+    showFormMessage(error.message || "Unable to open folder picker.", "error");
+  }
+}
+
 personIdEl.addEventListener("blur", defaultReferenceDir);
 personIdEl.addEventListener("change", () => {
   referenceDirEl.value = "";
   defaultReferenceDir();
   refreshResults();
 });
+
+document
+  .querySelectorAll("[data-picker]")
+  .forEach((button) => button.addEventListener("click", handleDirectoryPicker));
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();

@@ -34,22 +34,42 @@
 
           <label>
             <span>Reference folder</span>
-            <input
-              id="reference-dir"
-              name="reference_dir"
-              autocomplete="off"
-              placeholder="reference_people/alex"
-            />
+            <div class="input-action">
+              <input
+                id="reference-dir"
+                name="reference_dir"
+                autocomplete="off"
+                placeholder="reference_people/alex"
+              />
+              <button
+                class="picker-button"
+                type="button"
+                data-picker="reference-dir"
+                aria-label="Choose reference folder"
+              >
+                Choose
+              </button>
+            </div>
           </label>
 
           <label>
             <span>Photo folders</span>
-            <textarea
-              id="photos-roots"
-              name="photos_roots"
-              rows="5"
-              placeholder="/path/to/event/photos"
-            ></textarea>
+            <div class="textarea-action">
+              <textarea
+                id="photos-roots"
+                name="photos_roots"
+                rows="5"
+                placeholder="/path/to/event/photos"
+              ></textarea>
+              <button
+                class="picker-button"
+                type="button"
+                data-picker="photos-roots"
+                aria-label="Choose photo folders"
+              >
+                Choose
+              </button>
+            </div>
           </label>
 
           <div class="grid-2">
@@ -80,7 +100,17 @@
             <div class="settings">
               <label>
                 <span>Workspace</span>
-                <input id="workspace" name="workspace" value="outputs" />
+                <div class="input-action">
+                  <input id="workspace" name="workspace" value="outputs" />
+                  <button
+                    class="picker-button"
+                    type="button"
+                    data-picker="workspace"
+                    aria-label="Choose workspace folder"
+                  >
+                    Choose
+                  </button>
+                </div>
               </label>
               <label>
                 <span>Cache path</span>

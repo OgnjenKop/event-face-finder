@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Desktop permissions for local Event Face Finder workflows.",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:allow-open"]
+}

@@ -29,6 +29,20 @@ textarea {
   font: inherit;
 }
 
+.input-action,
+.textarea-action {
+  display: grid;
+  gap: 8px;
+}
+
+.input-action {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.textarea-action .picker-button {
+  justify-self: start;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: minmax(300px, 360px) 1fr;
@@ -161,6 +175,18 @@ button {
   padding: 10px 14px;
   cursor: pointer;
   font-weight: 700;
+}
+
+.picker-button {
+  align-self: stretch;
+  background: #ffffff;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.picker-button:hover {
+  border-color: var(--accent);
 }
 
 button:disabled {
@@ -406,7 +432,8 @@ pre {
   }
 
   .grid-2,
-  .status-strip {
+  .status-strip,
+  .input-action {
     grid-template-columns: 1fr;
   }
 

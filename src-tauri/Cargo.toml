@@ -1,0 +1,21 @@
+[package]
+name = "event-face-finder"
+version = "0.1.0"
+description = "Local face search for large event photo collections"
+authors = ["Event Face Finder contributors"]
+license = "MIT"
+repository = "https://github.com/OgnjenKop/event-face-finder"
+edition = "2021"
+rust-version = "1.77.2"
+
+[[bin]]
+name = "event-face-finder"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"

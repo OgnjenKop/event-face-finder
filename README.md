@@ -75,6 +75,19 @@ From a source checkout, this shortcut does the same thing:
 
 The GUI runs locally and writes results into `outputs/`.
 
+## Desktop App
+
+An experimental Tauri desktop wrapper is available for users who prefer a native
+window and folder pickers while keeping the same local Python engine.
+
+```bash
+npm install
+npm run desktop:dev
+```
+
+See [docs/desktop.md](docs/desktop.md) for setup, Rust requirements, and build
+notes.
+
 ## CLI Quick Start
 
 Create a reference folder for a person:
