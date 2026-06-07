@@ -7,8 +7,7 @@ until versioned releases are established.
 
 ## Reporting A Vulnerability
 
-Please report security or privacy-sensitive issues privately to the maintainers rather
-than opening a public issue.
+Please report security or privacy-sensitive issues privately. You can use the "Report a vulnerability" button on the **Security** tab of the GitHub repository, or email the maintainers at `ognjen.koprivica@live.com`. Do not open a public issue for security concerns.
 
 Examples of sensitive reports include:
 

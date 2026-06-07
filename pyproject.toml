@@ -37,6 +37,11 @@ dependencies = [
   "tqdm>=4.66.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.1.0",
+]
+
 [project.scripts]
 event-face-finder = "event_face_finder.cli:main"
 

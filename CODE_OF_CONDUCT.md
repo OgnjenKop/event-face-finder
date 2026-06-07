@@ -29,6 +29,4 @@ block participants when behavior harms the project or its community.
 
 ## Reporting
 
-If you need to report a conduct issue, contact the maintainers privately. Do not include
-private photos, embeddings, or event data unless a maintainer explicitly requests a safe
-minimal reproduction.
+If you need to report a conduct issue, please contact the maintainers privately at `ognjen.koprivica@live.com`. Do not include private photos, embeddings, or event data unless a maintainer explicitly requests a safe minimal reproduction.

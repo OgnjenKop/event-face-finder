@@ -1,5 +1,9 @@
 # Event Face Finder
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
 Local face search for large event photo collections.
 
 Event Face Finder helps photographers, event organizers, and participants find photos
@@ -49,6 +53,12 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
 pip install -r requirements.txt
+```
+
+*(Optional)* You can install the package in editable mode to make the `event-face-finder` CLI command available directly in your terminal:
+
+```bash
+pip install -e .
 ```
 
 On Windows PowerShell, activate the environment with:
@@ -211,6 +221,18 @@ sharing, publishing, or taking action based on them.
 ## Development
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for local development guidance.
+
+Install development dependencies:
+
+```bash
+pip install -e .[dev]
+```
+
+Run linter checks:
+
+```bash
+ruff check .
+```
 
 Run tests:
 
