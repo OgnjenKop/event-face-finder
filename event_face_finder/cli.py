@@ -18,6 +18,12 @@ from tqdm import tqdm
 
 from event_face_finder.validation import is_safe_person_id
 
+# When the GUI server launches the CLI as a subprocess, it sets
+# EFF_NO_TQDM=1 so the per-image progress bar's carriage returns do not
+# pollute the captured log. When run from a real terminal, tqdm renders
+# normally.
+TQDM_DISABLED = os.environ.get("EFF_NO_TQDM") == "1"
+
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp", ".heic", ".heif"}
 
 
@@ -165,8 +171,13 @@ def build_reference(
     if not images:
         raise SystemExit(f"No reference images found in {reference_dir}")
 
-    for image_path in tqdm(images, desc="Reference images"):
-        faces = detect_faces(app, image_path, max_image_size=0)
+    for image_path in tqdm(images, desc="Reference images", disable=TQDM_DISABLED):
+        try:
+            faces = detect_faces(app, image_path, max_image_size=0)
+        except (FileNotFoundError, PermissionError, OSError, ValueError) as exc:
+            print(f"Skipping unreadable reference image: {image_path} ({exc})")
+            rows.append({"path": str(image_path), "faces": 0, "used": False})
+            continue
         if not faces:
             rows.append({"path": str(image_path), "faces": 0, "used": False})
             continue
@@ -296,9 +307,13 @@ def run_person_workflow(
     cache = open_cache(shared_cache)
     try:
         reference_embeddings = load_reference_embeddings(reference_profile)
+        print(f"PROGRESS total={total}")
         for offset in range(0, total, chunk_size):
-            print(f"Scanning {person_id} chunk starting at image offset {offset}")
-            chunk = images[offset : offset + chunk_size]
+            chunk_end = min(offset + chunk_size, total)
+            print(
+                f"Scanning {person_id} chunk starting at image offset {offset} of {total}"
+            )
+            chunk = images[offset:chunk_end]
             matches = scan_image_paths(
                 chunk,
                 reference_embeddings,
@@ -310,7 +325,9 @@ def run_person_workflow(
             )
             cache.commit()
             write_matches_csv(matches_csv, matches, append=True)
-            print(f"Wrote {len(matches)} candidate face matches to {matches_csv}")
+            print(
+                f"PROGRESS done={chunk_end} total={total} matches={len(matches)}"
+            )
     finally:
         cache.close()
 
@@ -397,26 +414,75 @@ def create_contact_sheets(
     cell_h = thumb_size + label_height
     rows_per_sheet = 8
     page_size = columns * rows_per_sheet
+    header_height = 36
 
-    for page, chunk_start in enumerate(range(0, len(rows), page_size), start=1):
-        chunk = rows[chunk_start : chunk_start + page_size]
+    valid_rows: list[dict[str, object]] = []
+    skipped = 0
+    for row in rows:
+        try:
+            bbox = parse_bbox(row["bbox"])
+        except ValueError as exc:
+            print(f"Skipping contact-sheet row with invalid bbox: {exc}")
+            skipped += 1
+            continue
+        if not is_valid_bbox(bbox):
+            print(
+                f"Skipping contact-sheet row with degenerate bbox "
+                f"({bbox}) for {row.get('image_path', '?')}"
+            )
+            skipped += 1
+            continue
+        valid_rows.append({**row, "bbox_parsed": bbox})
+    if not valid_rows:
+        print(f"All {skipped} {bucket} rows were invalid; no contact sheets written.")
+        return
+
+    total_pages = int(np.ceil(len(valid_rows) / page_size))
+    for page, chunk_start in enumerate(range(0, len(valid_rows), page_size), start=1):
+        chunk = valid_rows[chunk_start : chunk_start + page_size]
         sheet_rows = int(np.ceil(len(chunk) / columns))
-        sheet = Image.new("RGB", (columns * cell_w, sheet_rows * cell_h), "white")
+        sheet = Image.new(
+            "RGB",
+            (columns * cell_w, sheet_rows * cell_h + header_height),
+            "white",
+        )
         draw = ImageDraw.Draw(sheet)
+        draw.text(
+            (10, 10),
+            f"{bucket.title()} matches  -  Page {page} of {total_pages}  -  "
+            f"{len(valid_rows)} face(s) total",
+            fill=(0, 0, 0),
+        )
 
         for index, row in enumerate(chunk):
             image_path = Path(row["image_path"])
             x = index % columns * cell_w
-            y = index // columns * cell_h
-            crop = load_face_crop(image_path, parse_bbox(row["bbox"]))
-            crop.thumbnail((thumb_size, thumb_size), Image.Resampling.LANCZOS)
-            sheet.paste(crop, (x + (thumb_size - crop.width) // 2, y))
-            label = f'{row["score"]}  {image_path.name[:24]}'
+            y = index // columns * cell_h + header_height
+            try:
+                crop = load_face_crop(image_path, row["bbox_parsed"])
+                crop.thumbnail((thumb_size, thumb_size), Image.Resampling.LANCZOS)
+                sheet.paste(crop, (x + (thumb_size - crop.width) // 2, y))
+            except (FileNotFoundError, OSError, ValueError) as exc:
+                print(f"Skipping unreadable image for contact sheet: {image_path} ({exc})")
+                continue
+            label = _truncate_label(f'{row["score"]}  {image_path.name}')
             draw.text((x + 4, y + thumb_size + 4), label, fill=(0, 0, 0))
 
         sheet.save(output_dir / f"{bucket}_{page:03d}.jpg", quality=92)
 
+    if skipped:
+        print(f"Skipped {skipped} invalid {bucket} row(s) in contact sheets.")
     print(f"Wrote contact sheets to {output_dir}")
+
+
+def _truncate_label(text: str, limit: int = 28) -> str:
+    if len(text) <= limit:
+        return text
+    stem, dot, ext = text.rpartition(".")
+    if dot and ext and len(stem) > limit - len(ext) - 2:
+        keep = max(1, limit - len(ext) - 2)
+        return f"{stem[:keep]}….{ext}"
+    return text[: limit - 1] + "…"
 
 
 def load_face_app(det_size: int, model_root: Path, provider: str):
@@ -463,8 +529,12 @@ def scan_image_paths(
     review_threshold: float,
 ) -> list[FaceMatch]:
     matches: list[FaceMatch] = []
-    for image_path in tqdm(images, desc="Scanning images"):
-        faces = get_or_detect_cached(cache, app, image_path, max_image_size)
+    for image_path in tqdm(images, desc="Scanning images", disable=TQDM_DISABLED):
+        try:
+            faces = get_or_detect_cached(cache, app, image_path, max_image_size)
+        except (FileNotFoundError, PermissionError, OSError, ValueError) as exc:
+            print(f"Skipping unreadable image: {image_path} ({exc})")
+            continue
         for face_index, face in enumerate(faces):
             score = best_similarity(face["embedding"], reference_embeddings)
             if score >= high_threshold:
@@ -611,8 +681,11 @@ def read_match_rows(csv_path: Path) -> list[dict[str, str]]:
 
 def iter_images(root: Path) -> Iterable[Path]:
     for path in root.rglob("*"):
-        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
-            yield path
+        try:
+            if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
+                yield path
+        except OSError:
+            continue
 
 
 def collect_scan_images(photos_roots: list[Path], output_dir: Path) -> list[Path]:
@@ -660,8 +733,21 @@ def face_area(bbox: np.ndarray) -> float:
 
 
 def parse_bbox(value: str) -> tuple[int, int, int, int]:
-    parsed = json.loads(value)
-    return int(parsed[0]), int(parsed[1]), int(parsed[2]), int(parsed[3])
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"bbox is not valid JSON: {value!r}") from exc
+    if not isinstance(parsed, (list, tuple)) or len(parsed) != 4:
+        raise ValueError(f"bbox must be a 4-element array, got: {value!r}")
+    try:
+        return int(parsed[0]), int(parsed[1]), int(parsed[2]), int(parsed[3])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"bbox elements must be numeric, got: {value!r}") from exc
+
+
+def is_valid_bbox(bbox: tuple[int, int, int, int]) -> bool:
+    x1, y1, x2, y2 = bbox
+    return x2 > x1 and y2 > y1
 
 
 def load_face_crop(image_path: Path, bbox: tuple[int, int, int, int]) -> Image.Image:

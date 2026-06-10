@@ -18,7 +18,9 @@
         </div>
 
         <form id="scan-form" class="scan-form">
-          <div id="form-message" class="form-message" role="status" hidden></div>
+          <fieldset class="scan-fieldset">
+            <legend class="visually-hidden">Scan settings</legend>
+            <div id="form-message" class="form-message" role="status" aria-live="polite" hidden></div>
 
           <label>
             <span>Person ID</span>
@@ -79,8 +81,11 @@
                 id="high-threshold"
                 name="high_threshold"
                 type="number"
+                min="0"
+                max="1"
                 step="0.01"
                 value="0.43"
+                aria-describedby="threshold-hint"
               />
             </label>
             <label>
@@ -89,11 +94,15 @@
                 id="review-threshold"
                 name="review_threshold"
                 type="number"
+                min="0"
+                max="1"
                 step="0.01"
                 value="0.34"
+                aria-describedby="threshold-hint"
               />
             </label>
           </div>
+          <p id="threshold-hint" class="field-hint">Review must be ≤ High, both between 0 and 1.</p>
 
           <details>
             <summary>Settings</summary>
@@ -159,15 +168,25 @@
             <button id="start-button" class="primary" type="submit">Start scan</button>
             <button id="stop-button" class="secondary" type="button">Stop</button>
           </div>
+          </fieldset>
         </form>
       </aside>
 
       <main class="workspace">
-        <section class="status-strip">
+        <section class="status-strip" aria-live="polite">
           <div>
             <span class="label">Status</span>
             <strong id="status">Idle</strong>
             <div id="status-note" class="status-note"></div>
+            <progress
+              id="progress-bar"
+              class="progress-bar"
+              value="0"
+              max="100"
+              aria-label="Scan progress"
+              hidden
+            ></progress>
+            <div id="progress-label" class="progress-label muted" hidden></div>
           </div>
           <div>
             <span class="label">High</span>
@@ -187,28 +206,43 @@
           <div class="panel">
             <div class="panel-head">
               <h2>Results</h2>
-              <button id="refresh-results" class="ghost" type="button" aria-label="Refresh results">
+              <button id="refresh-results" class="ghost" type="button" aria-label="Refresh">
                 Refresh
               </button>
             </div>
             <div id="paths" class="paths"></div>
             <div id="contact-sheets" class="contact-sheets"></div>
+            <div id="sheets-pagination" class="pagination" hidden></div>
           </div>
 
           <div class="panel log-panel">
             <div class="panel-head">
               <h2>Run Log</h2>
               <div class="log-actions">
-                <button id="clear-log" class="ghost" type="button" aria-label="Clear visible log">
-                  Clear
+                <button id="clear-log" class="ghost" type="button" aria-label="Hide older log lines">
+                  Hide older
                 </button>
-                <span id="return-code" class="muted"></span>
+                <span id="return-code" class="muted" aria-live="polite"></span>
               </div>
             </div>
-            <pre id="log"></pre>
+            <pre id="log" aria-live="polite"></pre>
           </div>
         </section>
       </main>
+    </div>
+
+    <div
+      id="lightbox"
+      class="lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Contact sheet preview"
+      hidden
+    >
+      <button id="lightbox-close" class="lightbox-close" type="button" aria-label="Close preview">
+        ×
+      </button>
+      <img id="lightbox-image" alt="" />
     </div>
 
     <script src="/static/app.js"></script>

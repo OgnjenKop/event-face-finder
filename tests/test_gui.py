@@ -1,11 +1,19 @@
 import sys
+import threading
 import unittest
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock
 
-from event_face_finder.gui import GuiState, build_run_command, list_reference_people, read_results
+from event_face_finder.gui import (
+    GuiState,
+    _parse_progress,
+    build_run_command,
+    list_reference_people,
+    parse_workspace,
+    read_results,
+)
 
 
 class GuiCommandTests(unittest.TestCase):
@@ -193,6 +201,122 @@ class GuiStateTests(unittest.TestCase):
 
         process.kill.assert_called_once()
         self.assertIn("force-stopped", state.job.lines[-1])
+
+    def test_progress_is_tracked_from_cli_lines(self) -> None:
+        state = GuiState()
+        state.append_line("PROGRESS total=100")
+        state.append_line("PROGRESS done=10 total=100 matches=3")
+        state.append_line("PROGRESS done=50 total=100 matches=12")
+        state.append_line("Skipping unreadable image: a.jpg (boom)")
+        state.append_line("PROGRESS done=100 total=100 matches=20")
+
+        snapshot = state.snapshot()
+        self.assertEqual(snapshot["progress"]["total"], 100)
+        self.assertEqual(snapshot["progress"]["done"], 100)
+
+    def test_non_progress_lines_do_not_change_progress(self) -> None:
+        state = GuiState()
+        state.append_line("Hello world")
+        state.append_line("Scanning alex chunk starting at image offset 0")
+        snapshot = state.snapshot()
+        self.assertEqual(snapshot["progress"], {"total": 0, "done": 0})
+
+
+class WorkspaceValidationTests(unittest.TestCase):
+    def test_absolute_paths_without_traversal_are_accepted(self) -> None:
+        path = parse_workspace("/Users/alex/outputs")
+        self.assertEqual(path, Path("/Users/alex/outputs"))
+
+    def test_relative_paths_are_rejected(self) -> None:
+        self.assertIsNone(parse_workspace(""))
+        self.assertIsNone(parse_workspace("foo/bar"))
+        self.assertIsNone(parse_workspace("~/outputs"))
+
+    def test_default_workspace_is_accepted(self) -> None:
+        from event_face_finder.gui import DEFAULT_WORKSPACE
+
+        self.assertEqual(parse_workspace(str(DEFAULT_WORKSPACE)), DEFAULT_WORKSPACE)
+
+    def test_parent_traversal_is_rejected(self) -> None:
+        self.assertIsNone(parse_workspace("/Users/alex/../etc"))
+
+    def test_workspace_constraint_holds_for_results(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            secret = workspace / "secret"
+            secret.mkdir()
+            (secret / "matches.csv").write_text("image_path\n/a.jpg\n")
+            results = read_results("alex", secret.parent)  # parent is real workspace
+            self.assertFalse(results["exists"])
+
+
+class GuiContactSheetTests(unittest.TestCase):
+    def test_contact_sheet_symlink_is_rejected(self) -> None:
+        """A symlink inside contact_sheets/ must not be served."""
+        import http.client
+        from contextlib import closing
+        from http.server import ThreadingHTTPServer
+
+        from event_face_finder.gui import make_handler
+
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            sheets = ws / "people" / "alex" / "contact_sheets"
+            sheets.mkdir(parents=True)
+            target = ws / "secret.txt"
+            target.write_text("private content")
+            (sheets / "leak.jpg").symlink_to(target)
+
+            state = Mock()
+            handler_cls = make_handler(state)
+            server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
+            host, port = server.server_address
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with closing(http.client.HTTPConnection(host, port, timeout=2)) as conn:
+                    conn.request(
+                        "GET",
+                        f"/api/contact-sheet?person_id=alex&workspace={ws}&filename=leak.jpg",
+                    )
+                    response = conn.getresponse()
+                    self.assertEqual(response.status, 403)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_contact_sheet_legitimate_file_is_served(self) -> None:
+        import http.client
+        from contextlib import closing
+        from http.server import ThreadingHTTPServer
+
+        from event_face_finder.gui import make_handler
+
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            sheets = ws / "people" / "alex" / "contact_sheets"
+            sheets.mkdir(parents=True)
+            (sheets / "real.jpg").write_bytes(b"\xff\xd8\xff\xe0fake-jpeg")
+
+            state = Mock()
+            handler_cls = make_handler(state)
+            server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
+            host, port = server.server_address
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with closing(http.client.HTTPConnection(host, port, timeout=2)) as conn:
+                    conn.request(
+                        "GET",
+                        f"/api/contact-sheet?person_id=alex&workspace={ws}&filename=real.jpg",
+                    )
+                    response = conn.getresponse()
+                    self.assertEqual(response.status, 200)
+                    body = response.read()
+                    self.assertEqual(body, b"\xff\xd8\xff\xe0fake-jpeg")
+            finally:
+                server.shutdown()
+                server.server_close()
 
 
 if __name__ == "__main__":

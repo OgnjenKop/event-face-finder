@@ -16,20 +16,33 @@ use tauri::Manager;
 
 const GUI_HOST: &str = "127.0.0.1";
 const GUI_PORT: u16 = 8765;
+const DEFAULT_STARTUP_TIMEOUT_SECS: u64 = 60;
 
 struct BackendProcess(Mutex<Option<Child>>);
 
 fn main() {
+    let startup_timeout = startup_timeout_from_env();
     tauri::Builder::default()
         .manage(BackendProcess(Mutex::new(None)))
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
+        .setup(move |app| {
             let launch_context = resolve_launch_context(app);
-            if !is_gui_reachable() {
-                let child = spawn_python_gui(&launch_context)?;
-                *app.state::<BackendProcess>().0.lock().expect("backend lock poisoned") =
-                    Some(child);
-                wait_for_gui(Duration::from_secs(25))?;
+            if is_gui_reachable() {
+                return Ok(());
+            }
+            match spawn_python_gui(&launch_context) {
+                Ok(child) => {
+                    *app.state::<BackendProcess>().0.lock().expect("backend lock poisoned") =
+                        Some(child);
+                    if let Err(error) = wait_for_gui(startup_timeout) {
+                        eprintln!("{error}");
+                        return Err(error);
+                    }
+                }
+                Err(error) => {
+                    eprintln!("Failed to start Event Face Finder backend: {error}");
+                    return Err(error);
+                }
             }
             Ok(())
         })
@@ -49,6 +62,18 @@ fn main() {
                 }
             }
         });
+}
+
+fn startup_timeout_from_env() -> Duration {
+    match std::env::var("EFF_STARTUP_TIMEOUT_SECS") {
+        Ok(value) => value
+            .parse::<u64>()
+            .ok()
+            .filter(|seconds| *seconds > 0)
+            .map(Duration::from_secs)
+            .unwrap_or_else(|| Duration::from_secs(DEFAULT_STARTUP_TIMEOUT_SECS)),
+        Err(_) => Duration::from_secs(DEFAULT_STARTUP_TIMEOUT_SECS),
+    }
 }
 
 struct LaunchContext {
@@ -201,8 +226,18 @@ fn is_gui_reachable() -> bool {
     }
 
     let mut response = String::new();
-    stream.read_to_string(&mut response).is_ok()
-        && response.starts_with("HTTP/")
-        && response.contains(" 200 ")
-        && response.contains("\"status\"")
+    if stream.read_to_string(&mut response).is_err() {
+        return false;
+    }
+    // The body of /api/status is JSON like {"status":"idle",...}. Confirm the
+    // endpoint is actually ours (and not another local service on the same
+    // port) by checking both the status line and the expected JSON key.
+    let header_end = match response.find("\r\n\r\n") {
+        Some(index) => index,
+        None => return false,
+    };
+    let headers = &response[..header_end];
+    let body = &response[header_end + 4..];
+    let status_ok = headers.starts_with("HTTP/1.1 200") || headers.starts_with("HTTP/1.0 200");
+    status_ok && body.contains("\"status\"")
 }
